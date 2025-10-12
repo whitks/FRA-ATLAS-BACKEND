@@ -33,6 +33,14 @@ from dss import (
 )
 from dss import get_lgeom_properties,parse_lgeom_properties
 
+#BRRRRRRRRRRRRR________________TOKENS TOKENS I REPEAT THE TOKENS ARE HERE
+
+district_lulc_stats_token="0670314ca018c20e53939ce6fe7b53eebeb98cff"
+
+
+aoi_stats_lulc_token="1a225e779c434461318e9026784947f26d38bfaa"
+
+
 # --- Flask App Config ---
 app = Flask(__name__)
 CORS(app)
@@ -247,7 +255,7 @@ class GetClaims(Resource):
 # --- DSS Endpoints ---
 class LULC(Resource):
     def get(self, distcode="0831"):
-        DISTRICT_TOKEN = "1bf4ced80c08d4eeb1b723c189fa4d676b2bea47"  # new token
+        DISTRICT_TOKEN = district_lulc_stats_token  # new token
         year = request.args.get("year", "1112")
         data = fetch_lulc_data(distcode, DISTRICT_TOKEN, year)
         return jsonify(data)
@@ -262,7 +270,7 @@ class ClaimEligibility(Resource):
     def get(self, claim_id):
         db_path = Path("instance/fra.db")
         district = request.args.get("district", "बारां")
-        DISTRICT_TOKEN = "1bf4ced80c08d4eeb1b723c189fa4d676b2bea47"  # new token
+        DISTRICT_TOKEN = district_lulc_stats_token  # new token
         distcode = request.args.get("distcode", "0831")
         lulc_data = fetch_lulc_data(distcode, DISTRICT_TOKEN)
         claims = get_claims_for_district(db_path, district)
@@ -275,7 +283,7 @@ class ClaimEligibility(Resource):
 class DistrictEligibilitySummary(Resource):
     def get(self, district):
         db_path = Path("instance/fra.db")
-        DISTRICT_TOKEN = "1bf4ced80c08d4eeb1b723c189fa4d676b2bea47"  # new token
+        DISTRICT_TOKEN = district_lulc_stats_token  # new token
         distcode = request.args.get("distcode", "0831")
         lulc_data = fetch_lulc_data(distcode, DISTRICT_TOKEN)
         summary = summarize_scheme_eligibility(db_path, district, lulc_data)
@@ -285,7 +293,7 @@ class AOILULC(Resource):
     def post(self):
         data = request.get_json()
         geom = data.get("geom")
-        AOI_TOKEN = "62ebc9b6ae320968835b45823c88b76f6d377f97"  # new AOI token
+        AOI_TOKEN = aoi_stats_lulc_token  # new AOI token
         result = get_aoi_lulc_stats(geom, AOI_TOKEN)
         return jsonify(result)
 
@@ -506,4 +514,4 @@ api.add_resource(LGeom, "/lgeom")
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True, allow_unsafe_werkzeug=True)
+    socketio.run(app, host="0.0.0.0", port=3000, debug=True, allow_unsafe_werkzeug=True)
