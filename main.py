@@ -4,8 +4,6 @@ from flask_restful import Api, Resource
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required
 )
-import eventlet
-eventlet.monkey_patch()  
 from datetime import datetime, timedelta
 from flask_cors import CORS
 from pathlib import Path
@@ -508,7 +506,4 @@ api.add_resource(LGeom, "/lgeom")
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-
-    # Local/dev server (safe to keep for local testing)
-    PORT = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=PORT, debug=False)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True, allow_unsafe_werkzeug=True)
