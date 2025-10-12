@@ -7,10 +7,12 @@ from flask_jwt_extended import (
 from datetime import datetime, timedelta
 from flask_cors import CORS
 from pathlib import Path
+from sqlalchemy import Float, cast
 from flask_socketio import SocketIO, emit
 import threading
 from groq import Groq
 from chatBot import Human
+
 # chatBot.py
 import os
 from dotenv import load_dotenv
@@ -297,6 +299,78 @@ class AOILULC(Resource):
         result = get_aoi_lulc_stats(geom, AOI_TOKEN)
         return jsonify(result)
 
+#this works through post so the client will have to post the data for the polygon in this
+# function to count the people living in the aoi 
+def count_claimants_in_polygon(db_session, wkt_polygon: str) -> int:
+    """
+    Count claimants whose coordinates are inside the bounding box of the given WKT polygon.
+    
+    Args:
+    - db_session: SQLAlchemy session or db.session
+    - wkt_polygon: WKT polygon string (e.g. "POLYGON((x1 y1, x2 y2, ..., xn yn))")
+    
+    Returns:
+    - Integer count of claimants inside the polygon bounding box.
+    """
+
+    # Parse coordinates from WKT polygon string
+    # Remove "POLYGON((" prefix and "))" suffix, then split on ","
+    coords_part = wkt_polygon.strip().replace("POLYGON((", "").replace("))", "")
+    points = [pt.strip() for pt in coords_part.split(",")]
+
+    # Extract lons (x) and lats (y)
+    lons = []
+    lats = []
+    for pt in points:
+        x_str, y_str = pt.split()
+        lons.append(float(x_str))
+        lats.append(float(y_str))
+
+    min_lon = min(lons)
+    max_lon = max(lons)
+    min_lat = min(lats)
+    max_lat = max(lats)
+
+    # Run SQLAlchemy query filtering latitude and longitude fields inside bounding box
+    count = db_session.query(FRAClaim).filter(
+        FRAClaim.longitude.cast(db.Float).between(min_lon, max_lon),
+        FRAClaim.latitude.cast(db.Float).between(min_lat, max_lat)
+    ).count()
+
+    return count
+
+
+#endpoint for the people in a aoi
+
+class AOIClaimCount(Resource):
+    def post(self):
+        # Step 1: Receive JSON data sent by client in POST request body
+        data = request.get_json()
+        
+        # Step 2: Extract 'wkt_polygon' from JSON
+        wkt_polygon = data.get("wkt_polygon")
+        
+        # Step 3: Validate input
+        if not wkt_polygon:
+            return {"error": "Missing 'wkt_polygon' in request body"}, 400
+        
+        # Step 4: Parse polygon and calculate bounding box (min/max lat/lon)
+        coords_str = wkt_polygon.strip().replace("POLYGON((", "").replace("))", "")
+        points = [point.strip().split(" ") for point in coords_str.split(",")]
+        lons = [float(pt[0]) for pt in points]
+        lats = [float(pt[1]) for pt in points]
+        min_lon, max_lon = min(lons), max(lons)
+        min_lat, max_lat = min(lats), max(lats)
+        
+        # Step 5: Query database to count claimants inside bounding box
+        count = db.session.query(FRAClaim).filter(
+            cast(FRAClaim.longitude, Float).between(min_lon, max_lon),
+            cast(FRAClaim.latitude, Float).between(min_lat, max_lat)
+        ).count()
+        
+        # Step 6: Return JSON response with claimant count
+        return jsonify({"aoi_claimant_count": count})
+
 users = {}
 @socketio.on("connect")
 def handle_connect():
@@ -417,7 +491,9 @@ api.add_resource(DistrictEligibilitySummary, "/eligibility/summary/<string:distr
 api.add_resource(AOILULC, "/lulc/aoi")
 api.add_resource(UploadDocument, "/upload")
 api.add_resource(GetUploadedFiles, "/uploads/<int:claim_id>")
+api.add_resource(AOIClaimCount, "/aoiclaim")
 
+#hello there Pookie
 
 class LGeom(Resource):
     """
