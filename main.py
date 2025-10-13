@@ -37,10 +37,10 @@ from dss import get_lgeom_properties,parse_lgeom_properties
 
 #BRRRRRRRRRRRRR________________TOKENS TOKENS I REPEAT THE TOKENS ARE HERE
 
-district_lulc_stats_token="0670314ca018c20e53939ce6fe7b53eebeb98cff"
+district_lulc_stats_token="8507e953e12563327fed6259b3ba14d377b0c1fd"
 
 
-aoi_stats_lulc_token="1a225e779c434461318e9026784947f26d38bfaa"
+aoi_stats_lulc_token="b51ab18a56ac50aaf01580f9188421c6b63cc5c4"
 
 
 # --- Flask App Config ---
