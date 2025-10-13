@@ -55,7 +55,7 @@ stats ✔️
 
 	particular areas ✔️
 
-~schemes wise claimant list ::: TODO
+~schemes wise claimant list ::: ️✔️
 
 
 Chatbot ???!??? :::TODO
