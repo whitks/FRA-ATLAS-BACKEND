@@ -46,7 +46,7 @@ aoi_stats_lulc_token="b51ab18a56ac50aaf01580f9188421c6b63cc5c4"
 # --- Flask App Config ---
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # --- Flask App Config ---
 BASE_DIR = Path(__file__).resolve().parent
@@ -703,6 +703,138 @@ class LGeom(Resource):
 
 
 api.add_resource(LGeom, "/lgeom")
+
+
+
+
+from datetime import datetime
+import zipfile
+import os
+
+class BulkUpload(Resource):
+    def post(self):
+        """
+        Endpoint: /bulk_upload
+        Handles bulk upload of legacy PDFs/images.
+        Just stores them in a timestamped folder inside uploads/bulk_uploads/.
+        """
+        if "file" not in request.files:
+            return {"msg": "No file part in the request"}, 400
+
+        file = request.files["file"]
+
+        if not file.filename.lower().endswith(".zip"):
+            return {"msg": "Only .zip files are allowed for bulk upload"}, 400
+
+        # Create timestamped directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        upload_dir = Path("uploads/bulk_uploads") / timestamp
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        zip_path = upload_dir / file.filename
+        file.save(zip_path)
+
+        # Extract ZIP contents
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(upload_dir)
+
+        # Count and list files
+        extracted_files = [f.name for f in upload_dir.glob("**/*") if f.is_file()]
+        summary = {
+            "msg": "Bulk upload completed successfully",
+            "upload_folder": str(upload_dir),
+            "total_files": len(extracted_files),
+            "sample_files": extracted_files[:10],
+        }
+
+        return jsonify(summary)
+
+
+api.add_resource(BulkUpload, "/bulkupload")
+
+from werkzeug.utils import secure_filename
+
+
+class UploadProof(Resource):
+    def post(self):
+        """
+        Endpoint: /upload_proof
+        Accepts multipart/form-data with fields:
+            - id: integer or string
+            - file: image file
+        Saves the image under uploads/<id>/proofs/
+        """
+        claim_id = request.form.get("id")
+        if not claim_id:
+            return {"msg": "Missing 'id' in form data"}, 400
+
+        if "file" not in request.files:
+            return {"msg": "No file part in request"}, 400
+
+        file = request.files["file"]
+        if file.filename == "":
+            return {"msg": "No selected file"}, 400
+
+        # Sanitize filename
+        filename = secure_filename(file.filename)
+
+        # Base path for uploads
+        base_upload_dir = Path("uploads") / str(claim_id) / "proofs"
+        base_upload_dir.mkdir(parents=True, exist_ok=True)  # creates folders if they don't exist
+
+        # Save file
+        file_path = base_upload_dir / filename
+        file.save(file_path)
+
+        return {
+            "msg": "Proof uploaded successfully",
+            "claim_id": claim_id,
+            "file_path": str(file_path)
+        }, 201
+api.add_resource(UploadProof, "/upload_proof")
+
+# Serve uploaded files (so frontend can access them by URL)
+@app.route("/uploads/<path:filename>")
+def serve_uploaded_file(filename):
+    return send_from_directory("uploads", filename)
+
+class GetProofs(Resource):
+    def get(self, claim_id):
+        """
+        Endpoint: /get_proofs/<claim_id>
+        Returns all image URLs for a given claim ID
+        """
+        base_url = request.host_url.rstrip("/")  # e.g., http://127.0.0.1:3000
+        proofs_dir = Path("uploads") / str(claim_id) / "proofs"
+
+        # Check if folder exists
+        if not proofs_dir.exists() or not proofs_dir.is_dir():
+            return {"msg": f"No proofs folder found for claim ID {claim_id}"}, 404
+
+        # Allowed image formats
+        image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+
+        # Build URLs for each image
+        image_urls = []
+        for file in proofs_dir.glob("*"):
+            if file.suffix.lower() in image_extensions:
+                relative_path = file.relative_to("uploads")
+                file_url = f"{base_url}/uploads/{relative_path.as_posix()}"
+                image_urls.append(file_url)
+
+        if not image_urls:
+            return {"msg": "No images found in proofs folder", "claim_id": claim_id}, 200
+
+        return {
+            "msg": "Proof images fetched successfully",
+            "claim_id": claim_id,
+            "total_images": len(image_urls),
+            "images": image_urls
+        }, 200
+
+api.add_resource(GetProofs, "/get_proofs/<string:claim_id>")
+
+
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
