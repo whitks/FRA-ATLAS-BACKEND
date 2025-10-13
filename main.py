@@ -169,6 +169,31 @@ def next_claim_id():
     src_max = db.session.query(func.max(ClaimSource.id)).scalar() or 0
     return max(fra_max, src_max) + 1
 
+import re
+
+def parse_land_area(value):
+    """
+    Safely parse 'land_area' field extracting the numeric part.
+    
+    Args:
+        value (str or any): The land area with possible units or text.
+    
+    Returns:
+        float: Extracted numeric value or 0.0 if parsing fails.
+    """
+    if not value:
+        return 0.0
+    # Convert to string if not already
+    value_str = str(value)
+    # Regex to find a decimal number in the string
+    match = re.search(r"[\d\.]+", value_str)
+    if match:
+        try:
+            return float(match.group(0))
+        except ValueError:
+            return 0.0
+    return 0.0
+
 
 class AddClaim(Resource):
     def post(self):
@@ -332,44 +357,129 @@ def count_claimants_in_polygon(db_session, wkt_polygon: str) -> int:
     max_lat = max(lats)
 
     # Run SQLAlchemy query filtering latitude and longitude fields inside bounding box
-    count = db_session.query(FRAClaim).filter(
+    claimants = db_session.query(FRAClaim).filter(
         FRAClaim.longitude.cast(db.Float).between(min_lon, max_lon),
         FRAClaim.latitude.cast(db.Float).between(min_lat, max_lat)
-    ).count()
+    ).all()
 
-    return count
+    return claimants
+
+
+#hey there borther this is for the deatils of rhte person in the oai 
+#YO MAMA SO FAT SHE FELL FROM THE BED ON BOTH SIDES AT THE SAME TIME 
+def get_claims_in_polygon(db_session, wkt_polygon: str):
+    """
+    Return a list of claimants inside the bounding box of the given WKT polygon.
+    
+    Args:
+        db_session: SQLAlchemy session or db.session
+        wkt_polygon: WKT polygon string ("POLYGON((x1 y1, x2 y2, ..., xn yn))")
+    
+    Returns:
+        List of FRAClaim objects inside the polygon bounding box.
+    """
+    # Remove "POLYGON((" prefix and "))" suffix, then split on ","
+    coords_part = wkt_polygon.strip().replace("POLYGON((", "").replace("))", "")
+    points = [pt.strip() for pt in coords_part.split(",")]
+
+    # Extract lons (x) and lats (y)
+    lons = []
+    lats = []
+    for pt in points:
+        x_str, y_str = pt.split()
+        lons.append(float(x_str))
+        lats.append(float(y_str))
+
+    min_lon = min(lons)
+    max_lon = max(lons)
+    min_lat = min(lats)
+    max_lat = max(lats)
+
+    # Query FRAClaim objects within bounding box
+    claimants = db_session.query(FRAClaim).filter(
+        FRAClaim.longitude.cast(db.Float).between(min_lon, max_lon),
+        FRAClaim.latitude.cast(db.Float).between(min_lat, max_lat)
+    ).all()
+
+    return claimants
 
 
 #endpoint for the people in a aoi
 
-class AOIClaimCount(Resource):
+
+#this is it
+class AOIClaimDetails(Resource):
     def post(self):
-        # Step 1: Receive JSON data sent by client in POST request body
         data = request.get_json()
-        
-        # Step 2: Extract 'wkt_polygon' from JSON
-        wkt_polygon = data.get("wkt_polygon")
-        
-        # Step 3: Validate input
-        if not wkt_polygon:
+        polygon = data.get("wkt_polygon")
+        if not polygon:
             return {"error": "Missing 'wkt_polygon' in request body"}, 400
-        
-        # Step 4: Parse polygon and calculate bounding box (min/max lat/lon)
-        coords_str = wkt_polygon.strip().replace("POLYGON((", "").replace("))", "")
-        points = [point.strip().split(" ") for point in coords_str.split(",")]
-        lons = [float(pt[0]) for pt in points]
-        lats = [float(pt[1]) for pt in points]
-        min_lon, max_lon = min(lons), max(lons)
-        min_lat, max_lat = min(lats), max(lats)
-        
-        # Step 5: Query database to count claimants inside bounding box
-        count = db.session.query(FRAClaim).filter(
-            cast(FRAClaim.longitude, Float).between(min_lon, max_lon),
-            cast(FRAClaim.latitude, Float).between(min_lat, max_lat)
-        ).count()
-        
-        # Step 6: Return JSON response with claimant count
-        return jsonify({"aoi_claimant_count": count})
+
+        # Fetch claimants inside AOI polygon bounding box
+        claimants = get_claims_in_polygon(db.session, polygon)
+
+        # Fetch AOI LULC stats (token from config)
+        lulc_stats = get_aoi_lulc_stats(polygon, aoi_stats_lulc_token)
+
+        dss_summaries = []
+        for c in claimants:
+            claim_dict = {
+                "id": c.id,
+                "holder_id": c.holder_id,
+                "land_area": parse_land_area(c.land_area),
+                "purpose": c.purpose,
+                "caste_status": c.caste_status,
+            }
+            eligibility = check_scheme_eligibility(claim_dict, lulc_stats)
+            dss_summaries.append({**claim_dict, "eligibility": eligibility})
+
+        return jsonify({
+            "aoi_claimant_count": len(dss_summaries),
+            "dss_summaries": dss_summaries,
+            "aoi_lulc_stats": lulc_stats,
+        })
+
+
+class AOISchemeSummary(Resource):
+    def post(self):
+        data = request.get_json()
+        polygon = data.get("wkt_polygon")
+        if not polygon:
+            return {"error": "Missing 'wkt_polygon' in request body"}, 400
+
+        # Fetch claimants inside AOI polygon bounding box
+        claimants = get_claims_in_polygon(db.session, polygon)
+
+        # Fetch AOI LULC stats
+        lulc_stats = get_aoi_lulc_stats(polygon, aoi_stats_lulc_token)
+
+        # Calculate eligibility for each claimant and count schemes
+        scheme_counts = {
+            "PM-KISAN": 0,
+            "Jal Jeevan Mission": 0,
+            "Van Dhan Yojana": 0,
+            "MGNREGA": 0,
+            "DAJGUA": 0,
+        }
+
+        for c in claimants:
+            claim_dict = {
+                "land_area": parse_land_area(c.land_area),
+                "purpose": c.purpose,
+                "caste_status": c.caste_status,
+            }
+            eligibility = check_scheme_eligibility(claim_dict, lulc_stats)
+            for scheme, is_eligible in eligibility.items():
+                if is_eligible:
+                    scheme_counts[scheme] += 1
+
+        return jsonify({
+            "aoi_claimant_count": len(claimants),
+            "scheme_counts": {k: v for k, v in scheme_counts.items() if v > 0}
+        })
+    
+
+
 
 users = {}
 @socketio.on("connect")
@@ -491,7 +601,13 @@ api.add_resource(DistrictEligibilitySummary, "/eligibility/summary/<string:distr
 api.add_resource(AOILULC, "/lulc/aoi")
 api.add_resource(UploadDocument, "/upload")
 api.add_resource(GetUploadedFiles, "/uploads/<int:claim_id>")
-api.add_resource(AOIClaimCount, "/aoiclaim")
+# api.add_resource(AOIClaimCount, "/aoiclaim") #REDUNDANT PIECE OF SHITE
+# api.add_resource(AOIClaimDetails, "/aoi-dss-summary")
+api.add_resource(AOIClaimDetails, "/aoi-dss-summary")
+api.add_resource(AOISchemeSummary, "/aoi-scheme-summary")
+
+
+
 
 #hello there Pookie
 
